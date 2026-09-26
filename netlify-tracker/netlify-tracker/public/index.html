@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Global Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F7F5F0; --ink:#1A1A1A; --meta:#6B6558;
+    --flag:#8B2E2E; --confirm:#2F5233; --rule:#D8D3C8; --gap:#8A6D2F;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#171613; --ink:#EDEAE2; --meta:#9B9686;
+      --flag:#D98A8A; --confirm:#8FBF9A; --rule:#3A382F; --gap:#D9B96A;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:'Source Serif 4', Georgia, serif; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:740px; margin:0 auto; padding:2.5rem 1.25rem 4rem;}
+  header{border-bottom:3px double var(--ink); padding-bottom:1.1rem; margin-bottom:1.5rem;}
+  .masthead{font-weight:700; font-size:2.1rem; margin:0; letter-spacing:-0.01em;}
+  .dateline{font-family:'Inter', sans-serif; font-size:0.8rem; color:var(--meta); margin-top:0.35rem;}
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule); margin:1.5rem 0 1.75rem; font-family:'Inter', sans-serif;}
+  .stat{background:var(--paper); padding:0.85rem 0.9rem;}
+  .stat .n{font-family:'Source Serif 4', serif; font-size:1.6rem; font-weight:700; line-height:1;}
+  .stat .l{font-size:0.7rem; color:var(--meta); margin-top:0.3rem;}
+  .region{margin-top:2.5rem;}
+  .region-title{font-family:'Inter', sans-serif; font-weight:600; font-size:0.95rem; border-bottom:1px solid var(--rule); padding-bottom:0.4rem; margin-bottom:1.25rem; display:flex; justify-content:space-between; align-items:baseline;}
+  .region-title .count{color:var(--meta); font-weight:400; font-size:0.75rem;}
+  .event{margin-bottom:1.9rem; max-width:64ch;}
+  .event h3{font-size:1.15rem; font-weight:600; margin:0 0 0.4rem; line-height:1.35;}
+  .meta-line{font-family:'Inter', sans-serif; font-size:0.75rem; color:var(--meta); margin-bottom:0.6rem;}
+  .tag{display:inline-block; padding:0.1rem 0.5rem; border-radius:2px; font-size:0.7rem; font-family:'Inter',sans-serif; font-weight:500;}
+  .tag.confirm{background:color-mix(in srgb, var(--confirm) 16%, transparent); color:var(--confirm);}
+  .tag.flag{background:color-mix(in srgb, var(--flag) 16%, transparent); color:var(--flag);}
+  .tag.warn{background:color-mix(in srgb, var(--gap) 18%, transparent); color:var(--gap);}
+  p{line-height:1.65; margin:0.5rem 0;}
+  .claims{margin:0.6rem 0 0; padding-left:1.1rem;}
+  .claims li{margin-bottom:0.4rem; line-height:1.6;}
+  .src{font-family:'Inter', sans-serif; font-size:0.72rem; color:var(--meta);}
+  .state-box{margin-top:2rem; padding:1.1rem 1.2rem; border:1px solid var(--rule); font-family:'Inter', sans-serif; font-size:0.85rem; color:var(--meta); line-height:1.6;}
+  footer{margin-top:3rem; padding-top:1.25rem; border-top:1px solid var(--rule); font-family:'Inter', sans-serif; font-size:0.75rem; color:var(--meta); line-height:1.65;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="masthead">Global Tracker</p>
+    <p class="dateline" id="dateline">Loading latest digest…</p>
+  </header>
+  <div id="content"></div>
+</div>
+
+<script>
+async function load() {
+  const contentEl = document.getElementById("content");
+  const datelineEl = document.getElementById("dateline");
+  try {
+    const res = await fetch("/.netlify/functions/get-digest");
+    const payload = await res.json();
+
+    if (!payload.ok || !payload.digest) {
+      datelineEl.textContent = "No digest yet";
+      contentEl.innerHTML = `<div class="state-box">${payload.message || "Nothing generated yet. It runs automatically once a day, or an admin can trigger it manually."}</div>`;
+      return;
+    }
+
+    const d = payload.digest;
+    datelineEl.textContent = "Digest generated " + new Date(d.generated_at).toLocaleString();
+
+    const confirmedCount = d.summaries.reduce((n, s) => n + s.consensus_facts.length, 0);
+    const singleCount = d.summaries.reduce((n, s) => n + s.disputed_or_unconfirmed_facts.length, 0);
+    const regionCount = new Set(d.summaries.map((s) => s.region || "Unclassified")).size;
+
+    let html = `<div class="stats">
+      <div class="stat"><div class="n">${regionCount}</div><div class="l">Regions covered</div></div>
+      <div class="stat"><div class="n">${confirmedCount}</div><div class="l">Claims confirmed by 2+ sources</div></div>
+      <div class="stat"><div class="n">${singleCount}</div><div class="l">Single-source, pending corroboration</div></div>
+    </div>`;
+
+    if (d.gemini_crosscheck_enabled) {
+      html += `<p style="font-family:'Inter',sans-serif;font-size:0.8rem;color:var(--meta);">Dual-model cross-check active — ${d.model_disagreement_count} extraction disagreement(s) flagged below.</p>`;
+    }
+
+    const byRegion = {};
+    for (const s of d.summaries) {
+      const r = s.region || "Unclassified";
+      (byRegion[r] = byRegion[r] || []).push(s);
+    }
+
+    for (const [region, items] of Object.entries(byRegion).sort()) {
+      html += `<section class="region"><div class="region-title">${region}<span class="count">${items.length} event(s)</span></div>`;
+      for (const item of items) {
+        const confirmTag = item.confidence === "high"
+          ? `<span class="tag confirm">Confirmed — ${item.sources_count} sources</span>`
+          : `<span class="tag flag">Single-source</span>`;
+        html += `<div class="event">
+          <h3>${escapeHtml(item.sample_headline)}</h3>
+          <div class="meta-line">${confirmTag} &nbsp;${escapeHtml(item.event_type || "")}</div>`;
+
+        if (item.consensus_facts.length) {
+          html += `<ul class="claims">` + item.consensus_facts.map((c) =>
+            `<li>${escapeHtml(c.claim)} <span class="src">— ${c.sources.map(escapeHtml).join(", ")}</span></li>`
+          ).join("") + `</ul>`;
+        }
+        if (item.disputed_or_unconfirmed_facts.length) {
+          html += `<ul class="claims">` + item.disputed_or_unconfirmed_facts.map((c) =>
+            `<li>${escapeHtml(c.claim)} <span class="src">— unconfirmed, ${c.sources.map(escapeHtml).join(", ")}</span></li>`
+          ).join("") + `</ul>`;
+        }
+        if (item.model_disagreements && item.model_disagreements.length) {
+          html += `<div class="meta-line" style="margin-top:0.5rem;"><span class="tag warn">Claude/Gemini disagreement</span></div>
+            <ul class="claims">` + item.model_disagreements.flatMap((md) =>
+              md.disagreements.map((dis) => `<li><code>${escapeHtml(dis.field)}</code> — Claude: ${escapeHtml(String(dis.claude))} | Gemini: ${escapeHtml(String(dis.gemini))}</li>`)
+            ).join("") + `</ul>`;
+        }
+        html += `</div>`;
+      }
+      html += `</section>`;
+    }
+
+    html += `<footer>
+      <strong>Confirmed</strong> = reported compatibly by 2+ independent outlets.
+      <strong>Single-source</strong> = real and attributed, but not yet independently corroborated.
+      Sourced from ${d.articles_fetched} articles fetched, ${d.articles_after_dedupe} kept after dedupe, ${d.events_identified} distinct events identified.
+    </footer>`;
+
+    contentEl.innerHTML = html;
+  } catch (err) {
+    datelineEl.textContent = "Error loading digest";
+    contentEl.innerHTML = `<div class="state-box">Could not reach the digest function: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
+load();
+</script>
+</body>
+</html>
